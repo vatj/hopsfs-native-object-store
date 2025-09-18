@@ -346,6 +346,44 @@ impl HopsClient {
         }
     }
 
+    fn hopsfs_connect_as_user_with_tls(
+        url: &str,
+        cert_dir: &str,
+        username: &str,
+    ) -> Result<*const hdfsFS> {
+        let (host_str, port_u16) = extract_host_and_port(url);
+        let c_host = CString::new(host_str).expect("CString conversion failed");
+        let c_port: c_ushort = port_u16;
+
+        unsafe {
+            let builder = native::hdfsNewBuilder();
+            if builder.is_null() {
+                return Err(HdfsError::OperationFailed(
+                    "Failed to create HopsFS builder".to_string(),
+                ));
+            }
+
+            native::hdfsBuilderSetNameNode(builder, c_host.as_ptr());
+            native::hdfsBuilderSetNameNodePort(builder, c_port);
+            native::hdfsBuilderSetForceNewInstance(builder);
+            native::hdfsBuilderSetUserName(
+                builder,
+                CString::new(username)
+                    .map_err(|_| HdfsError::OperationFailed("Invalid user name".to_string()))?
+                    .as_ptr(),
+            );
+
+            let fs = native::hdfsBuilderConnectWithTLS(builder, cert_dir.as_ptr());
+            if fs.is_null() {
+                return Err(HdfsError::OperationFailed(format!(
+                    "Connection to HopsFS failed! {}",
+                    url.to_string()
+                )));
+            }
+            Ok(fs)
+        }
+    }
+
     pub async fn check_file_exists(&self, path: &str) -> Result<bool> {
         let connection = self.get_connection();
         let c_path = CString::new(path).unwrap();
