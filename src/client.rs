@@ -311,6 +311,13 @@ impl HopsClient {
         url: &str,
         config: &HashMap<String, String>,
     ) -> Result<*const hdfsFS> {
+        if let (Some(username), Some(cert_dir)) = (config.get("username"), config.get("cert_dir")) {
+            return Self::hopsfs_connect_as_user_with_tls(
+                url,
+                cert_dir,
+                username,
+            );
+        }
         let (host_str, port_u16) = extract_host_and_port(url);
         let c_host = CString::new(host_str).expect("CString conversion failed");
         let c_port: c_ushort = port_u16;
