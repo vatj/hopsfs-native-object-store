@@ -1,2 +1,2 @@
 [env]
-HOPS_LIB_BASE_URL = "https://nexus.hops.works/repository/hopshadoop"
+HOPS_LIB_BASE_URL = "https://nexus.hops.works/repository/dev/hops-packaging-dev/HWORKS-2203"

@@ -9,6 +9,7 @@ use url::Url;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    info!("Starting build script...");
 
     extract_tarball()?;
     set_libraries();

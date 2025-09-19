@@ -199,6 +199,21 @@ extern "C" {
     /// Returns a handle to the filesystem, or ```NULL``` on error.
     pub fn hdfsBuilderConnect(bld: *mut hdfsBuilder) -> *const hdfsFS;
 
+    /// Connect to HDFS using the parameters defined by the builder enabling TLS from the provided cert_dir.
+    ///
+    /// The HDFS builder will be freed, whether or not the connection was successful.
+    ///
+    /// Every successful call to hdfsBuilderConnectWithTLS should be matched with a call
+    /// to hdfsDisconnect, when the hdfsFS is no longer needed.
+    ///
+    /// #### Params
+    /// * ```bld``` - The HDFS builder
+    /// * ```certDir``` - The directory containing trusted TLS certificates.
+    ///
+    /// #### Return
+    /// Returns a handle to the filesystem, or ```NULL``` on error.
+    pub fn hdfsBuilderConnectWithTLS(bld: *mut hdfsBuilder, certDir: *const c_char) -> *const hdfsFS;
+
     /// Create an HDFS builder.
     ///
     /// #### Return

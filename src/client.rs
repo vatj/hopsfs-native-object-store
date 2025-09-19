@@ -353,6 +353,10 @@ impl HopsClient {
     ) -> Result<*const hdfsFS> {
         let (host_str, port_u16) = extract_host_and_port(url);
         let c_host = CString::new(host_str).expect("CString conversion failed");
+        let c_cert_dir = CString::new(cert_dir)
+            .expect("CString conversion of cert_dir failed");
+        let c_username = CString::new(username)
+            .expect("CString conversion of username failed");
         let c_port: c_ushort = port_u16;
 
         unsafe {
@@ -368,12 +372,10 @@ impl HopsClient {
             native::hdfsBuilderSetForceNewInstance(builder);
             native::hdfsBuilderSetUserName(
                 builder,
-                CString::new(username)
-                    .map_err(|_| HdfsError::OperationFailed("Invalid user name".to_string()))?
-                    .as_ptr(),
+                c_username.as_ptr(),
             );
 
-            let fs = native::hdfsBuilderConnectWithTLS(builder, cert_dir.as_ptr());
+            let fs = native::hdfsBuilderConnectWithTLS(builder, c_cert_dir.as_ptr());
             if fs.is_null() {
                 return Err(HdfsError::OperationFailed(format!(
                     "Connection to HopsFS failed! {}",
