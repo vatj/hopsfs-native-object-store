@@ -5,10 +5,9 @@ use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use url::Url;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    // env_logger::init();
     info!("Starting build script...");
 
     extract_tarball()?;
