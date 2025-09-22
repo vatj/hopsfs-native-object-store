@@ -390,7 +390,7 @@ impl HopsClient {
             if fs.is_null() {
                 return Err(HdfsError::OperationFailed(format!(
                     "Connection to HopsFS failed! {}",
-                    url.to_string()
+                    url
                 )));
             }
             Ok(fs)
