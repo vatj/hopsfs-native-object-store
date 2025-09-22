@@ -43,7 +43,7 @@ fn extract_tarball() -> Result<(), Box<dyn std::error::Error>> {
     if !response.status().is_success() {
         return Err(format!("Failed to download file: HTTP {}", response.status()).into());
     }
-    let mut tarball_file = File::create(&tarball_path)?;
+    let mut tarball_file = File::create(tarball_path)?;
     io::copy(&mut response, &mut tarball_file)?;
     info!("Downloaded tarball to {:?}", tarball_path);
 
@@ -53,7 +53,7 @@ fn extract_tarball() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir(&extract_dir)?;
 
-    let tarball_file = File::open(&tarball_path)?;
+    let tarball_file = File::open(tarball_path)?;
     let decompressor = flate2::read::GzDecoder::new(tarball_file);
     let mut archive = tar::Archive::new(decompressor);
     archive.unpack(&extract_dir)?;
@@ -96,7 +96,7 @@ fn extract_tarball() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     fs::remove_dir_all(&extract_dir)?;
-    fs::remove_file(&tarball_path)?;
+    fs::remove_file(tarball_path)?;
     info!("Cleaned up temporary files");
     Ok(())
 }

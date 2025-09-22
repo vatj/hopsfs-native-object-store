@@ -290,7 +290,7 @@ impl HopsClient {
         Err(HdfsError::OperationFailed(format!(
             "Connection to HopsFS failed after {} attempts! {}",
             max_retries,
-            uri.to_string()
+            uri
         )))
     }
 
@@ -312,6 +312,7 @@ impl HopsClient {
         config: &HashMap<String, String>,
     ) -> Result<*const hdfsFS> {
         if let (Some(username), Some(cert_dir)) = (config.get("username"), config.get("cert_dir")) {
+            println!("Connecting with TLS to HopsFS at {} as user {}", url, username);
             return Self::hopsfs_connect_as_user_with_tls(
                 url,
                 cert_dir,
@@ -346,7 +347,7 @@ impl HopsClient {
             if fs.is_null() {
                 return Err(HdfsError::OperationFailed(format!(
                     "Connection to HopsFS failed! {}",
-                    url.to_string()
+                    url
                 )));
             }
             Ok(fs)
@@ -365,6 +366,9 @@ impl HopsClient {
         let c_username = CString::new(username)
             .expect("CString conversion of username failed");
         let c_port: c_ushort = port_u16;
+
+        println!("Connecting with TLS to {} on port {} as user {}", host, port, username);
+        println!("Using certificate directory: {}", cert_dir);
 
         unsafe {
             let builder = native::hdfsNewBuilder();
