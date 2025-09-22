@@ -367,8 +367,8 @@ impl HopsClient {
             .expect("CString conversion of username failed");
         let c_port: c_ushort = port_u16;
 
-        println!("Connecting with TLS to {} on port {} as user {}", host, port, username);
-        println!("Using certificate directory: {}", cert_dir);
+        println!("Connecting with TLS to {} on port {} as user {}", c_host.to_str().unwrap(), c_port, c_username.to_str().unwrap());
+        println!("Using certificate directory: {}", c_cert_dir.to_str().unwrap());
 
         unsafe {
             let builder = native::hdfsNewBuilder();
