@@ -52,6 +52,16 @@ async fn main() -> Result<()> {
     // 3. File system operations
     println!("\n3. File System Operations:");
     
+    // Demonstrate read_to_string with size limit and file size check
+    let reader = client.open_for_read("/hdfs/safe_file.txt").await?;
+    let file_size = reader.get_file_size().await?;
+    println!("   ✓ File size: {} bytes", file_size);
+    
+    match reader.read_to_string().await {
+        Ok(content) => println!("   ✓ Read file as string ({} bytes)", content.len()),
+        Err(e) => println!("   ⚠ Failed to read file as string: {}", e),
+    }
+    
     // Change permissions (644 = rw-r--r--)
     client.chmod("/hdfs/safe_file.txt", 0o644).await?;
     println!("   ✓ Changed file permissions to 644");

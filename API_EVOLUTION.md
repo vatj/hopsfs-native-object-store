@@ -3,7 +3,9 @@
 ## Key Evolution Points
 
 ### 1. FileReader Enhancement
-Enhanced from basic file reader to full async reading support with `hdfsRead` integration, including `read_to_string` convenience method.
+Enhanced from basic file reader to full async reading support with `hdfsRead` integration, including:
+- `read_to_string()` convenience method with efficient upfront 64MB size check
+- `get_file_size()` utility method for file size determination
 
 ### 2. Copy Operations Implementation
 Added `copy_from_local` and `copy_to_local` with chunked async I/O and proper error handling.

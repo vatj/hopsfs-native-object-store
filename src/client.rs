@@ -236,13 +236,20 @@ impl FileReader {
     /// Reads the entire file content as a UTF-8 string.
     /// 
     /// This is a convenience method that:
-    /// 1. Seeks to the beginning of the file
-    /// 2. Reads all content in chunks
-    /// 3. Converts the bytes to a UTF-8 string
+    /// 1. Checks the total file size against a 64MB limit
+    /// 2. Seeks to the beginning of the file
+    /// 3. Reads all content in chunks
+    /// 4. Converts the bytes to a UTF-8 string
+    /// 
+    /// # Size Limit
+    /// This method has a built-in safety limit of 64MB to prevent accidentally loading
+    /// very large files into memory. If you need to read larger files, use the 
+    /// streaming `hdfs_read` method in chunks.
     /// 
     /// # Returns
     /// - `Ok(String)` containing the file content on success
-    /// - `Err(HdfsError)` if the read operation fails or if the file contains invalid UTF-8
+    /// - `Err(HdfsError)` if the read operation fails, if the file contains invalid UTF-8,
+    ///   or if the file exceeds the 64MB size limit
     /// 
     /// # Example
     /// ```rust,no_run
@@ -256,10 +263,24 @@ impl FileReader {
     /// # }
     /// ```
     pub async fn read_to_string(&self) -> Result<String> {
-        // First, seek to the beginning of the file
+        const MAX_FILE_SIZE: usize = 64 * 1024 * 1024; // 64MB limit
+        
+        // First, get the file size by seeking to the end
+        let file_size = self.get_file_size().await?;
+        
+        // Check size limit before reading anything into memory
+        if file_size > MAX_FILE_SIZE {
+            return Err(HdfsError::OperationFailed(
+                format!("File too large to read into string ({} bytes exceeds {}MB limit). Use hdfs_read() for streaming large files.", 
+                        file_size, MAX_FILE_SIZE / 1024 / 1024)
+            ));
+        }
+        
+        // Seek to the beginning of the file
         self.hdfs_seek(0).await?;
         
-        let mut content = Vec::new();
+        // Pre-allocate vector with known size for efficiency
+        let mut content = Vec::with_capacity(file_size);
         const CHUNK_SIZE: usize = 8192; // 8KB chunks for reading
         
         loop {
@@ -279,6 +300,29 @@ impl FileReader {
         })
     }
 
+    /// Gets the total size of the file in bytes.
+    /// 
+    /// This method seeks to the end of the file to determine its size,
+    /// then returns to the original position.
+    /// 
+    /// # Returns
+    /// - `Ok(usize)` containing the file size in bytes
+    /// - `Err(HdfsError)` if the operation fails
+    pub async fn get_file_size(&self) -> Result<usize> {
+        // Save current position
+        let current_pos = self.hdfs_tell().await?;
+        
+        // Seek to end to get file size
+        // Using a large number (i64::MAX) to seek to end
+        self.hdfs_seek(i64::MAX).await?;
+        let file_size = self.hdfs_tell().await?;
+        
+        // Restore original position
+        self.hdfs_seek(current_pos).await?;
+        
+        Ok(file_size as usize)
+    }
+
     pub async fn close_file(&self) -> Result<()> {
         let file_ptr = self.get_file_ptr() as usize;
         let connection = Arc::clone(&self.connection);
@@ -295,8 +339,6 @@ impl FileReader {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
     }
-
-
 }
 
 impl Drop for FileReader {
