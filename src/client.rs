@@ -123,14 +123,16 @@ impl FileStatus {
 pub struct FileReader {
     connection: Arc<Connection>,
     file: Arc<AtomicPtr<hdfsFile>>,
+    file_path: String,
     closed: AtomicBool,
 }
 
 impl FileReader {
-    pub fn new(connection: Arc<Connection>, file: *mut hdfsFile) -> Self {
+    pub fn new(connection: Arc<Connection>, file: *mut hdfsFile, file_path: String) -> Self {
         FileReader {
             connection,
             file: Arc::new(AtomicPtr::new(file)),
+            file_path,
             closed: AtomicBool::new(false),
         }
     }
@@ -302,25 +304,39 @@ impl FileReader {
 
     /// Gets the total size of the file in bytes.
     /// 
-    /// This method seeks to the end of the file to determine its size,
-    /// then returns to the original position.
+    /// This method uses the stored file path to retrieve file information
+    /// directly via hdfsGetPathInfo, which is more efficient than seeking.
     /// 
     /// # Returns
     /// - `Ok(usize)` containing the file size in bytes
     /// - `Err(HdfsError)` if the operation fails
     pub async fn get_file_size(&self) -> Result<usize> {
-        // Save current position
-        let current_pos = self.hdfs_tell().await?;
+        let path_cstr = CString::new(self.file_path.as_str())
+            .map_err(|_| HdfsError::InvalidPath(self.file_path.clone()))?;
+        let connection = Arc::clone(&self.connection);
         
-        // Seek to end to get file size
-        // Using a large number (i64::MAX) to seek to end
-        self.hdfs_seek(i64::MAX).await?;
-        let file_size = self.hdfs_tell().await?;
+        let file_size = task::spawn_blocking(move || unsafe {
+            let path_info = native::hdfsGetPathInfo(connection.get_conn_ptr(), path_cstr.as_ptr());
+            
+            if path_info.is_null() {
+                return Err(HdfsError::OperationFailed(
+                    "Failed to get file information".to_string(),
+                ));
+            }
+            
+            let size = (*path_info).mSize as usize;
+            native::hdfsFreeFileInfo(path_info, 1);
+            
+            Ok(size)
+        })
+        .await;
         
-        // Restore original position
-        self.hdfs_seek(current_pos).await?;
-        
-        Ok(file_size as usize)
+        match file_size {
+            Ok(result) => result,
+            Err(_) => Err(HdfsError::OperationFailed(
+                "Failed to get file size".to_string(),
+            )),
+        }
     }
 
     pub async fn close_file(&self) -> Result<()> {
@@ -690,6 +706,7 @@ impl HopsClient {
             .map_err(|_| HdfsError::OperationFailed("Invalid path".to_string()))?;
         let connection = self.get_connection();
         let connection_clone = Arc::clone(&connection);
+        let path_owned = path.to_string();
 
         let file_reader = task::spawn_blocking(move || unsafe {
             let hdfs_file = native::hdfsOpenFile(
@@ -706,7 +723,7 @@ impl HopsClient {
                     "Failed to open file".to_string(),
                 ))
             } else {
-                Ok(FileReader::new(connection_clone, hdfs_file.cast_mut()))
+                Ok(FileReader::new(connection_clone, hdfs_file.cast_mut(), path_owned))
             }
         })
         .await
