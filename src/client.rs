@@ -1,5 +1,6 @@
 use libc::{O_RDONLY, O_WRONLY};
 use std::ffi::{CStr, CString};
+use std::path::Path;
 
 use crate::native;
 use crate::native::{hdfsFS, hdfsFile, hdfsFileInfo, tObjectKind, tOffset, tSize};
@@ -749,6 +750,107 @@ impl HopsClient {
         Ok(true)
     }
 
+    /// Changes ownership of the file or directory.
+    /// 
+    /// # Arguments
+    /// * `path` - Path to the file or directory
+    /// * `owner` - New owner name (use None to keep current owner)
+    /// * `group` - New group name (use None to keep current group)
+    /// 
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(HdfsError)` on failure
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdfs_native_object_store::HopsClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
+    /// 
+    /// // Change both owner and group
+    /// client.chown("/hdfs/file.txt", Some("newuser"), Some("newgroup")).await?;
+    /// 
+    /// // Change only owner
+    /// client.chown("/hdfs/file.txt", Some("newuser"), None).await?;
+    /// 
+    /// // Change only group
+    /// client.chown("/hdfs/file.txt", None, Some("newgroup")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn chown(&self, path: &str, owner: Option<&str>, group: Option<&str>) -> Result<()> {
+        let path_cstr = CString::new(path).map_err(|_| HdfsError::InvalidPath(path.to_string()))?;
+        
+        let owner_cstr = owner.map(|o| CString::new(o).map_err(|_| HdfsError::InvalidPath(o.to_string()))).transpose()?;
+        let group_cstr = group.map(|g| CString::new(g).map_err(|_| HdfsError::InvalidPath(g.to_string()))).transpose()?;
+        
+        let connection = self.get_connection();
+        
+        let res = task::spawn_blocking(move || unsafe {
+            native::hdfsChown(
+                connection.get_conn_ptr(),
+                path_cstr.as_ptr(),
+                owner_cstr.as_ref().map_or(std::ptr::null(), |o| o.as_ptr()),
+                group_cstr.as_ref().map_or(std::ptr::null(), |g| g.as_ptr()),
+            )
+        })
+        .await;
+
+        if res.is_err() || res.unwrap() == -1 {
+            return Err(HdfsError::OperationFailed(
+                format!("Failed to change ownership of {}", path)
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Changes permissions of the file or directory.
+    /// 
+    /// # Arguments
+    /// * `path` - Path to the file or directory
+    /// * `mode` - New permission mode (octal format, e.g., 0o755 for rwxr-xr-x)
+    /// 
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(HdfsError)` on failure
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdfs_native_object_store::HopsClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
+    /// 
+    /// // Set permissions to rwxr-xr-x (755)
+    /// client.chmod("/hdfs/file.txt", 0o755).await?;
+    /// 
+    /// // Set permissions to rw-r--r-- (644)
+    /// client.chmod("/hdfs/file.txt", 0o644).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn chmod(&self, path: &str, mode: u16) -> Result<()> {
+        let path_cstr = CString::new(path).map_err(|_| HdfsError::InvalidPath(path.to_string()))?;
+        let connection = self.get_connection();
+        
+        let res = task::spawn_blocking(move || unsafe {
+            native::hdfsChmod(
+                connection.get_conn_ptr(),
+                path_cstr.as_ptr(),
+                mode as c_short,
+            )
+        })
+        .await;
+
+        if res.is_err() || res.unwrap() == -1 {
+            return Err(HdfsError::OperationFailed(
+                format!("Failed to change permissions of {}", path)
+            ));
+        }
+
+        Ok(())
+    }
+
     pub async fn list_directory(&self, prefix: &str) -> Result<Vec<FileStatus>> {
         let path_cstr =
             CString::new(prefix).map_err(|_| HdfsError::InvalidPath(prefix.to_string()))?;
@@ -917,7 +1019,7 @@ impl HopsClient {
     /// # Arguments
     /// * `hdfs_path` - Path to the HDFS file to copy from
     /// * `local_path` - Destination path on the local filesystem
-    /// * `opts` - Optional write options. If None, uses default options with overwrite=false
+    /// * `overwrite` - Whether to overwrite the destination file if it exists
     /// 
     /// # Returns
     /// * `Ok(())` on successful copy
@@ -925,41 +1027,57 @@ impl HopsClient {
     /// 
     /// # Example
     /// ```rust,no_run
-    /// # use hdfs_native_object_store::client::{HopsClient, WriteOptions, Result};
+    /// # use hdfs_native_object_store::client::{HopsClient, Result};
     /// # async fn example() -> Result<()> {
     /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
     /// 
     /// // Safe copy (no overwrite)
-    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", None).await?;
+    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", false).await?;
     /// 
     /// // Copy with overwrite allowed
-    /// let opts = WriteOptions { overwrite: true, ..Default::default() };
-    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", Some(opts)).await?;
+    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", true).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn copy_to_local(&self, hdfs_path: &str, local_path: &str, opts: Option<WriteOptions>) -> Result<()> {
+    pub async fn copy_to_local(&self, hdfs_path: &str, local_path: &str, overwrite: bool, create_parent: bool) -> Result<()> {
         // Check if HDFS file exists
         if !self.check_file_exists(hdfs_path).await? {
             return Err(HdfsError::FileNotFound(hdfs_path.to_string()));
         }
 
-        // Use provided options or default to safe settings
-        let write_opts = opts.unwrap_or_default();
-        
-        // Check if local file exists and handle overwrite logic
-        if fs::metadata(local_path).await.is_ok() && !write_opts.overwrite {
-            return Err(HdfsError::AlreadyExists(local_path.to_string()));
-        }
-
         // Open HDFS file for reading
         let reader = self.open_for_read(hdfs_path).await?;
         
-        // Create local file asynchronously (this will overwrite if file exists)
-        let mut local_file = fs::File::create(local_path).await
-            .map_err(|_| HdfsError::OperationFailed(
-                format!("Failed to create local file: {}", local_path)
-            ))?;
+        // Create parent directories if requested
+        if create_parent {
+            if let Some(parent) = Path::new(local_path).parent() {
+                fs::create_dir_all(parent).await
+                    .map_err(|e| HdfsError::OperationFailed(
+                        format!("Failed to create parent directories for {}: {}", local_path, e)
+                    ))?;
+            }
+        }
+        
+        // Create local file using OpenOptions for better overwrite control
+        let mut local_file = fs::OpenOptions::new()
+            .write(true)
+            .create(overwrite)      // Only create if overwrite is allowed
+            .create_new(!overwrite) // Create new file only if overwrite=false (fails if exists)
+            .truncate(overwrite)    // Truncate existing file if overwrite=true
+            .open(local_path)
+            .await
+            .map_err(|e| {
+                match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => {
+                        HdfsError::AlreadyExists(local_path.to_string())
+                    }
+                    _ => {
+                        HdfsError::OperationFailed(
+                            format!("Failed to create local file: {}", local_path)
+                        )
+                    }
+                }
+            })?;
         
         // Read HDFS file in chunks and write to local file
         const CHUNK_SIZE: usize = DATA_BLOCK_SIZE;
@@ -986,37 +1104,7 @@ impl HopsClient {
         Ok(())
     }
 
-    /// Copy a file from local to HDFS with safe default settings.
-    /// 
-    /// This is a convenience method that uses default WriteOptions with overwrite=false
-    /// for safe copying operations.
-    /// 
-    /// # Arguments
-    /// * `local_path` - Path to the local file to copy from
-    /// * `hdfs_path` - Destination path in HDFS
-    /// 
-    /// # Returns
-    /// * `Ok(())` on successful copy
-    /// * `Err(HdfsError)` if the copy operation fails or destination already exists
-    pub async fn copy_from_local_safe(&self, local_path: &str, hdfs_path: &str) -> Result<()> {
-        self.copy_from_local(local_path, hdfs_path, None).await
-    }
 
-    /// Copy a file from HDFS to local with safe default settings.
-    /// 
-    /// This is a convenience method that uses default WriteOptions with overwrite=false
-    /// for safe copying operations.
-    /// 
-    /// # Arguments
-    /// * `hdfs_path` - Path to the HDFS file to copy from  
-    /// * `local_path` - Destination path on the local filesystem
-    /// 
-    /// # Returns
-    /// * `Ok(())` on successful copy
-    /// * `Err(HdfsError)` if the copy operation fails or destination already exists
-    pub async fn copy_to_local_safe(&self, hdfs_path: &str, local_path: &str) -> Result<()> {
-        self.copy_to_local(hdfs_path, local_path, None).await
-    }
 }
 
 fn extract_host_and_port(uri: &str) -> (String, u16) {
