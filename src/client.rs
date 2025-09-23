@@ -224,6 +224,52 @@ impl FileReader {
         }
     }
 
+    /// Reads the entire file content as a UTF-8 string.
+    /// 
+    /// This is a convenience method that:
+    /// 1. Seeks to the beginning of the file
+    /// 2. Reads all content in chunks
+    /// 3. Converts the bytes to a UTF-8 string
+    /// 
+    /// # Returns
+    /// - `Ok(String)` containing the file content on success
+    /// - `Err(HdfsError)` if the read operation fails or if the file contains invalid UTF-8
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdfs_native_object_store::client::{HopsClient, Result};
+    /// # async fn example() -> Result<()> {
+    /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
+    /// let reader = client.open_for_read("/path/to/textfile.txt").await?;
+    /// let content = reader.read_to_string().await?;
+    /// println!("File content: {}", content);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn read_to_string(&self) -> Result<String> {
+        // First, seek to the beginning of the file
+        self.hdfs_seek(0).await?;
+        
+        let mut content = Vec::new();
+        const CHUNK_SIZE: usize = 8192; // 8KB chunks for reading
+        
+        loop {
+            let chunk = self.hdfs_read(CHUNK_SIZE).await?;
+            if chunk.is_empty() {
+                // End of file reached
+                break;
+            }
+            content.extend_from_slice(&chunk);
+        }
+        
+        // Convert bytes to UTF-8 string
+        String::from_utf8(content).map_err(|_| {
+            HdfsError::OperationFailed(
+                "File contains invalid UTF-8 data".to_string(),
+            )
+        })
+    }
+
     pub async fn close_file(&self) -> Result<()> {
         let file_ptr = self.get_file_ptr() as usize;
         let connection = Arc::clone(&self.connection);
@@ -240,6 +286,8 @@ impl FileReader {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
     }
+
+
 }
 
 impl Drop for FileReader {
