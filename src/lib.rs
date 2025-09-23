@@ -266,7 +266,7 @@ impl ObjectStore for HdfsObjectStore {
             .expect("unable to convert range.end to usize");
 
         let connection = self.client.get_connection();
-        let stream = ReadRangeStream::new(connection, reader.file, start, end);
+        let stream = ReadRangeStream::new(connection, reader.get_file_handle(), start, end);
         let box_stream = stream.map(|b| b.to_object_store_err()).boxed();
 
         let payload = GetResultPayload::Stream(box_stream);

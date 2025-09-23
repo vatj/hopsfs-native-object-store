@@ -2,7 +2,7 @@ use libc::{O_RDONLY, O_WRONLY};
 use std::ffi::{CStr, CString};
 
 use crate::native;
-use crate::native::{hdfsFS, hdfsFile, hdfsFileInfo, tObjectKind, tSize};
+use crate::native::{hdfsFS, hdfsFile, hdfsFileInfo, tObjectKind, tOffset, tSize};
 use bytes::Bytes;
 use futures::stream::Stream;
 use libc::{c_int, c_short, c_ushort, c_void, int32_t};
@@ -110,18 +110,145 @@ impl FileStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct FileReader {
-    pub file: Arc<AtomicPtr<hdfsFile>>,
+    connection: Arc<Connection>,
+    file: Arc<AtomicPtr<hdfsFile>>,
+    closed: AtomicBool,
 }
 
 impl FileReader {
-    pub fn new(file: *mut hdfsFile) -> Self {
+    pub fn new(connection: Arc<Connection>, file: *mut hdfsFile) -> Self {
         FileReader {
+            connection,
             file: Arc::new(AtomicPtr::new(file)),
+            closed: AtomicBool::new(false),
         }
     }
     pub fn get_file_ptr(&self) -> *const hdfsFile {
         self.file.load(Ordering::SeqCst)
+    }
+
+    pub fn get_file_handle(&self) -> Arc<AtomicPtr<hdfsFile>> {
+        Arc::clone(&self.file)
+    }
+
+    pub async fn hdfs_read(&self, buffer_size: usize) -> Result<Bytes> {
+        let file_ptr = self.get_file_ptr() as usize;
+        let connection = Arc::clone(&self.connection);
+        
+        let res = task::spawn_blocking(move || {
+            let mut buffer = vec![0u8; buffer_size];
+            let buf_ptr = buffer.as_mut_ptr().cast::<c_void>();
+            let buf_len = buffer_size as tSize;
+            
+            unsafe {
+                let bytes_read = native::hdfsRead(
+                    connection.get_conn_ptr(),
+                    file_ptr as *const hdfsFile,
+                    buf_ptr,
+                    buf_len,
+                );
+                
+                if bytes_read < 0 {
+                    Err(HdfsError::OperationFailed(
+                        "File read operation failed".to_string(),
+                    ))
+                } else if bytes_read == 0 {
+                    // End of file
+                    Ok(Bytes::new())
+                } else {
+                    // Truncate buffer to actual bytes read
+                    buffer.truncate(bytes_read as usize);
+                    Ok(Bytes::from(buffer))
+                }
+            }
+        })
+        .await;
+
+        match res {
+            Ok(result) => result,
+            Err(_) => Err(HdfsError::OperationFailed(
+                "File read operation failed".to_string(),
+            )),
+        }
+    }
+
+    pub async fn hdfs_seek(&self, position: i64) -> Result<()> {
+        let file_ptr = self.get_file_ptr() as usize;
+        let connection = Arc::clone(&self.connection);
+        
+        let res = task::spawn_blocking(move || unsafe {
+            native::hdfsSeek(
+                connection.get_conn_ptr(),
+                file_ptr as *const hdfsFile,
+                position as tOffset,
+            )
+        })
+        .await;
+
+        if res.is_err() || res.unwrap() == -1 {
+            Err(HdfsError::OperationFailed(
+                "File seek operation failed".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn hdfs_tell(&self) -> Result<i64> {
+        let file_ptr = self.get_file_ptr() as usize;
+        let connection = Arc::clone(&self.connection);
+        
+        let res = task::spawn_blocking(move || unsafe {
+            native::hdfsTell(
+                connection.get_conn_ptr(),
+                file_ptr as *const hdfsFile,
+            )
+        })
+        .await;
+
+        match res {
+            Ok(position) => {
+                if position == -1 {
+                    Err(HdfsError::OperationFailed(
+                        "File tell operation failed".to_string(),
+                    ))
+                } else {
+                    Ok(position)
+                }
+            },
+            Err(_) => Err(HdfsError::OperationFailed(
+                "File tell operation failed".to_string(),
+            )),
+        }
+    }
+
+    pub async fn close_file(&self) -> Result<()> {
+        let file_ptr = self.get_file_ptr() as usize;
+        let connection = Arc::clone(&self.connection);
+        let res = task::spawn_blocking(move || unsafe {
+            native::hdfsCloseFile(connection.get_conn_ptr(), file_ptr as *const hdfsFile)
+        })
+        .await;
+
+        if res.is_err() || res.unwrap() == -1 {
+            return Err(HdfsError::OperationFailed(
+                "File close operation failed".to_string(),
+            ));
+        }
+        self.closed.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl Drop for FileReader {
+    fn drop(&mut self) {
+        if !self.closed.load(Ordering::SeqCst) {
+            unsafe {
+                native::hdfsCloseFile(self.connection.get_conn_ptr(), self.get_file_ptr());
+            }
+        }
     }
 }
 
@@ -365,7 +492,7 @@ impl HopsClient {
         let c_username = CString::new(username)
             .expect("CString conversion of username failed");
         let c_port: c_ushort = port_u16;
-        
+
         unsafe {
             let builder = native::hdfsNewBuilder();
             if builder.is_null() {
@@ -463,6 +590,7 @@ impl HopsClient {
         let c_path = CString::new(path)
             .map_err(|_| HdfsError::OperationFailed("Invalid path".to_string()))?;
         let connection = self.get_connection();
+        let connection_clone = Arc::clone(&connection);
 
         let file_reader = task::spawn_blocking(move || unsafe {
             let hdfs_file = native::hdfsOpenFile(
@@ -479,7 +607,7 @@ impl HopsClient {
                     "Failed to open file".to_string(),
                 ))
             } else {
-                Ok(FileReader::new(hdfs_file.cast_mut()))
+                Ok(FileReader::new(connection_clone, hdfs_file.cast_mut()))
             }
         })
         .await
