@@ -15,6 +15,8 @@ use std::thread;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::task;
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DATA_BLOCK_SIZE: usize = 65536;
 const MAX_CONNECTIONS: usize = 1;
@@ -43,21 +45,27 @@ pub type Result<T> = std::result::Result<T, HdfsError>;
 
 #[derive(Clone)]
 pub struct WriteOptions {
+    /// Block size for HDFS files. None uses cluster default, Some(size) sets explicit size.
+    /// Default: 128MB (good for modern HDFS clusters and large files)
     pub block_size: Option<c_int>,
+    /// Replication factor for HDFS files. None uses cluster default (typically 3).
     pub replication: Option<c_short>,
+    /// Whether to overwrite existing files. Default: false (safe)
     pub overwrite: bool,
+    /// Whether to create parent directories if they don't exist. Default: true (convenient)
     pub create_parent: bool, //create_parent false is not supported, yet!
+    /// Buffer size for I/O operations. Default: 64KB (good balance of throughput and memory)
     pub buffer_size: c_int,
 }
 
 impl Default for WriteOptions {
     fn default() -> Self {
         Self {
-            block_size: None,
-            replication: None,
-            overwrite: false,
-            create_parent: true,
-            buffer_size: 0,
+            block_size: Some(128 * 1024 * 1024), // 128MB - good for modern HDFS clusters and large files
+            replication: None,                    // Use HDFS cluster default (typically 3)
+            overwrite: false,                     // Safe by default
+            create_parent: true,                  // Convenient default behavior
+            buffer_size: 64 * 1024,              // 64KB - good balance for throughput and memory usage
         }
     }
 }
@@ -823,6 +831,191 @@ impl HopsClient {
         }
 
         Ok(())
+    }
+
+    /// Copy a file from the local filesystem to HDFS.
+    /// 
+    /// This method reads a local file asynchronously and writes it to HDFS in chunks
+    /// to handle large files efficiently without blocking the async runtime.
+    /// 
+    /// # Arguments
+    /// * `local_path` - Path to the local file to copy from
+    /// * `hdfs_path` - Destination path in HDFS
+    /// * `opts` - Optional write options for the HDFS file. If None, uses default options with overwrite=false
+    /// 
+    /// # Returns
+    /// * `Ok(())` on successful copy
+    /// * `Err(HdfsError)` if the copy operation fails or destination exists and overwrite is false
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdfs_native_object_store::client::{HopsClient, WriteOptions, Result};
+    /// # async fn example() -> Result<()> {
+    /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
+    /// 
+    /// // Safe copy (no overwrite)
+    /// client.copy_from_local("/local/file.txt", "/hdfs/file.txt", None).await?;
+    /// 
+    /// // Copy with custom options and overwrite
+    /// let opts = WriteOptions { overwrite: true, ..Default::default() };
+    /// client.copy_from_local("/local/file.txt", "/hdfs/file.txt", Some(opts)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn copy_from_local(&self, local_path: &str, hdfs_path: &str, opts: Option<WriteOptions>) -> Result<()> {
+        // Check if local file exists and is readable using async file operations
+        let local_metadata = fs::metadata(local_path).await
+            .map_err(|_| HdfsError::FileNotFound(local_path.to_string()))?;
+        
+        if !local_metadata.is_file() {
+            return Err(HdfsError::InvalidPath(format!("{} is not a file", local_path)));
+        }
+
+        // Use provided options or default to safe settings
+        let write_opts = opts.unwrap_or_default();
+        
+        // Check if destination exists and handle overwrite logic
+        if self.check_file_exists(hdfs_path).await? && !write_opts.overwrite {
+            return Err(HdfsError::AlreadyExists(hdfs_path.to_string()));
+        }
+
+        // Create the HDFS file
+        let writer = self.create(hdfs_path, write_opts).await?;
+        
+        // Read local file asynchronously in chunks
+        let mut local_file = fs::File::open(local_path).await
+            .map_err(|_| HdfsError::FileNotFound(local_path.to_string()))?;
+        
+        const CHUNK_SIZE: usize = DATA_BLOCK_SIZE;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        
+        // Read and write file in chunks
+        loop {
+            match local_file.read(&mut buffer).await {
+                Ok(0) => break, // EOF
+                Ok(bytes_read) => {
+                    let chunk = Bytes::copy_from_slice(&buffer[..bytes_read]);
+                    writer.hdfs_write(chunk).await?;
+                }
+                Err(_) => {
+                    return Err(HdfsError::OperationFailed(
+                        format!("Failed to read from local file: {}", local_path)
+                    ));
+                }
+            }
+        }
+        
+        writer.close_file().await?;
+        Ok(())
+    }
+
+    /// Copy a file from HDFS to the local filesystem.
+    /// 
+    /// This method reads an HDFS file and writes it to the local filesystem asynchronously
+    /// to handle large files efficiently without blocking the async runtime.
+    /// 
+    /// # Arguments
+    /// * `hdfs_path` - Path to the HDFS file to copy from
+    /// * `local_path` - Destination path on the local filesystem
+    /// * `opts` - Optional write options. If None, uses default options with overwrite=false
+    /// 
+    /// # Returns
+    /// * `Ok(())` on successful copy
+    /// * `Err(HdfsError)` if the copy operation fails or destination exists and overwrite is false
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdfs_native_object_store::client::{HopsClient, WriteOptions, Result};
+    /// # async fn example() -> Result<()> {
+    /// let client = HopsClient::with_url("hopsfs://localhost:8020")?;
+    /// 
+    /// // Safe copy (no overwrite)
+    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", None).await?;
+    /// 
+    /// // Copy with overwrite allowed
+    /// let opts = WriteOptions { overwrite: true, ..Default::default() };
+    /// client.copy_to_local("/hdfs/file.txt", "/local/file.txt", Some(opts)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn copy_to_local(&self, hdfs_path: &str, local_path: &str, opts: Option<WriteOptions>) -> Result<()> {
+        // Check if HDFS file exists
+        if !self.check_file_exists(hdfs_path).await? {
+            return Err(HdfsError::FileNotFound(hdfs_path.to_string()));
+        }
+
+        // Use provided options or default to safe settings
+        let write_opts = opts.unwrap_or_default();
+        
+        // Check if local file exists and handle overwrite logic
+        if fs::metadata(local_path).await.is_ok() && !write_opts.overwrite {
+            return Err(HdfsError::AlreadyExists(local_path.to_string()));
+        }
+
+        // Open HDFS file for reading
+        let reader = self.open_for_read(hdfs_path).await?;
+        
+        // Create local file asynchronously (this will overwrite if file exists)
+        let mut local_file = fs::File::create(local_path).await
+            .map_err(|_| HdfsError::OperationFailed(
+                format!("Failed to create local file: {}", local_path)
+            ))?;
+        
+        // Read HDFS file in chunks and write to local file
+        const CHUNK_SIZE: usize = DATA_BLOCK_SIZE;
+        
+        loop {
+            let chunk = reader.hdfs_read(CHUNK_SIZE).await?;
+            if chunk.is_empty() {
+                break; // EOF
+            }
+            
+            local_file.write_all(&chunk).await
+                .map_err(|_| HdfsError::OperationFailed(
+                    format!("Failed to write to local file: {}", local_path)
+                ))?;
+        }
+        
+        // Ensure all data is written to disk
+        local_file.flush().await
+            .map_err(|_| HdfsError::OperationFailed(
+                "Failed to flush local file".to_string()
+            ))?;
+        
+        reader.close_file().await?;
+        Ok(())
+    }
+
+    /// Copy a file from local to HDFS with safe default settings.
+    /// 
+    /// This is a convenience method that uses default WriteOptions with overwrite=false
+    /// for safe copying operations.
+    /// 
+    /// # Arguments
+    /// * `local_path` - Path to the local file to copy from
+    /// * `hdfs_path` - Destination path in HDFS
+    /// 
+    /// # Returns
+    /// * `Ok(())` on successful copy
+    /// * `Err(HdfsError)` if the copy operation fails or destination already exists
+    pub async fn copy_from_local_safe(&self, local_path: &str, hdfs_path: &str) -> Result<()> {
+        self.copy_from_local(local_path, hdfs_path, None).await
+    }
+
+    /// Copy a file from HDFS to local with safe default settings.
+    /// 
+    /// This is a convenience method that uses default WriteOptions with overwrite=false
+    /// for safe copying operations.
+    /// 
+    /// # Arguments
+    /// * `hdfs_path` - Path to the HDFS file to copy from  
+    /// * `local_path` - Destination path on the local filesystem
+    /// 
+    /// # Returns
+    /// * `Ok(())` on successful copy
+    /// * `Err(HdfsError)` if the copy operation fails or destination already exists
+    pub async fn copy_to_local_safe(&self, hdfs_path: &str, local_path: &str) -> Result<()> {
+        self.copy_to_local(hdfs_path, local_path, None).await
     }
 }
 

@@ -26,7 +26,7 @@ chrono = "0.4"
 futures = "0.3"
 object_store = "0.12"
 thiserror = "2"
-tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync", "time", "fs"] }
 libc = "0.1.10"
 async-stream = "0.3.6"
 
