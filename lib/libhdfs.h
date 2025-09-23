@@ -12,8 +12,6 @@
 
 #ifndef GO_CGO_GOSTRING_TYPEDEF
 typedef struct { const char *p; ptrdiff_t n; } _GoString_;
-extern size_t _GoStringLen(_GoString_ s);
-extern const char *_GoStringPtr(_GoString_ s);
 #endif
 
 #endif
@@ -53,15 +51,9 @@ typedef size_t GoUintptr;
 typedef float GoFloat32;
 typedef double GoFloat64;
 #ifdef _MSC_VER
-#if !defined(__cplusplus) || _MSVC_LANG <= 201402L
 #include <complex.h>
 typedef _Fcomplex GoComplex64;
 typedef _Dcomplex GoComplex128;
-#else
-#include <complex>
-typedef std::complex<float> GoComplex64;
-typedef std::complex<double> GoComplex128;
-#endif
 #else
 typedef float _Complex GoComplex64;
 typedef double _Complex GoComplex128;
@@ -95,7 +87,7 @@ extern "C" {
 * @return         version string. Caller is reponsible for
                   de-allocating the version string
 */
-extern cchar_t* libhdfs_version(void);
+extern cchar_t* libhdfs_version();
 
 // LIBHDFS_EXTERNAL
 // struct hdfsBuilder *hdfsNewBuilder(void);
@@ -104,7 +96,7 @@ extern cchar_t* libhdfs_version(void);
  *
  * @return The HDFS builder, or NULL on error.
  */
-extern hdfsBuilder* hdfsNewBuilder(void);
+extern hdfsBuilder* hdfsNewBuilder();
 
 /**
  * Set the HDFS NameNode to connect to.
@@ -291,7 +283,7 @@ extern int hdfsChown(hdfsFS fs, cchar_t* path, cchar_t* owner, cchar_t* group);
  * @param mode the bitmask to set it to
  * @return 0 on success else -1
  */
-extern int hdfsChmod(hdfsFS fs, cchar_t* path, short int mode);
+extern int hdfsChmod(hdfsFS fs, cchar_t* path, short mode);
 
 /**
  * hdfsCloseFile - Close an open file.
@@ -329,7 +321,7 @@ extern int hdfsFlush(hdfsFS fs, hdfsFile file);
  * default configured values.
  * @return Returns the handle to the open file or NULL on error.
  */
-extern hdfsFile hdfsOpenFile(hdfsFS fs, cchar_t* path, int flags, int bufferSize, short int replication, tSize blockSize);
+extern hdfsFile hdfsOpenFile(hdfsFS fs, cchar_t* path, int flags, int bufferSize, short replication, tSize blockSize);
 
 /**
  * hdfsRead - Read data from an open file.
@@ -779,7 +771,7 @@ extern tOffset hdfsGetDefaultBlockSizeAtPath(hdfsFS fs, cchar_t* path);
   - contain the error number.
 */
 // ENOSYS. NOT IMLEMENTED
-extern hadoopRzOptions* hadoopRzOptionsAlloc(void);
+extern hadoopRzOptions* hadoopRzOptionsAlloc();
 
 //    LIBHDFS_EXTERNAL
 //    int hadoopRzOptionsSetSkipChecksum(
