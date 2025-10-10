@@ -187,6 +187,15 @@ extern void hdfsBuilderConfSetStr(hdfsBuilder* bld, cchar_t* key, cchar_t* val);
 extern hdfsFS hdfsBuilderConnect(hdfsBuilder* bld);
 
 /**
+ * hdfsConnect - Connect to a hdfs file system.
+ * Connect to the hdfs.
+ * @param nn   The NameNode.  See hdfsBuilderSetNameNode for details.
+ * @param port Cert directory for TLS connection
+ * @return Returns a handle to the filesystem or NULL on error.
+ */
+extern hdfsFS hdfsBuilderConnectWithTLS(hdfsBuilder* bld, cchar_t* certDir);
+
+/**
  * hdfsCreateDirectory - Make the given file and all non-existent
  * parents into directories.
  * @param fs The configured filesystem handle.
