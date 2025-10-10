@@ -10,6 +10,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // env_logger::init();
     info!("Starting build script...");
 
+    // Check for system-hdfs feature first
+    if env::var("CARGO_FEATURE_SYSTEM_HDFS").is_ok() {
+        // Use system hdfs library
+        println!("cargo:rustc-link-lib=hdfs");
+        if let Ok(lib_path) = env::var("HDFS_LIB_PATH") {
+            println!("cargo:rustc-link-search=native={}", lib_path);
+        }
+        return Ok(());
+    }
+
+    // Check for user-provided library path override
+    if let Ok(lib_path) = env::var("HDFS_LIB_PATH") {
+        println!("cargo:rustc-link-search=native={}", lib_path);
+        println!("cargo:rustc-link-lib=hdfs");
+        return Ok(());
+    }
+
     extract_tarball()?;
     set_libraries();
     Ok(())
@@ -127,18 +144,42 @@ fn set_libraries() {
     println!("cargo:rustc-link-search=native={}", manifest_dir);
     println!("cargo:rustc-link-search=native={}/lib", manifest_dir);
     
-    // Try both static and dynamic linking
-    if Path::new(&format!("{}/libhdfs.so", manifest_dir)).exists() {
+    // Check for the actual library file first, then try different linking strategies
+    let lib_dir = Path::new(&manifest_dir).join("lib");
+    let direct_so_path = lib_dir.join("libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.so");
+    let direct_a_path = lib_dir.join("libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.a");
+    let symlink_so_path = Path::new(&manifest_dir).join("libhdfs.so");
+    
+    // Try to copy the library file directly to avoid symlink issues in git dependencies
+    if direct_so_path.exists() && !symlink_so_path.exists() {
+        if let Err(_) = std::fs::copy(&direct_so_path, &symlink_so_path) {
+            // If copy fails, try direct linking
+            println!("cargo:rustc-link-lib=dylib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
+            println!("cargo:rustc-link-search=native={}", lib_dir.display());
+            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
+            return;
+        }
+    }
+    
+    if direct_so_path.exists() {
+        // Use the direct library path to avoid symlink issues
+        println!("cargo:rustc-link-lib=dylib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    } else if symlink_so_path.exists() {
+        // Try using the symlink
         println!("cargo:rustc-link-lib=hdfs");
-    } else if Path::new(&format!("{}/lib/libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.so", manifest_dir)).exists() {
-        // Directly link to the specific library file
-        println!("cargo:rustc-link-lib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
-    } else {
+    } else if direct_a_path.exists() {
         // Fallback to static linking
+        println!("cargo:rustc-link-lib=static=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    } else {
+        // Final fallback
         println!("cargo:rustc-link-lib=static=hdfs");
     }
     
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

@@ -38,6 +38,8 @@ serial_test = "3"
 default = ["skip-download"]
 integration-test = []
 skip-download = []
+# Use this feature to bypass build script and use system hdfs library
+system-hdfs = []
 
 # Provide library linking instructions
 [package.metadata.docs.rs]
