@@ -7,6 +7,9 @@ __pycache__/
 
 # C extensions
 *.so
+# But allow our specific hdfs library files
+!libhdfs.so
+!lib/
 
 # Distribution / packaging
 .Python
@@ -17,7 +20,6 @@ build/
 develop-eggs/
 dist/
 eggs/
-lib/
 lib64/
 parts/
 sdist/
