@@ -140,46 +140,34 @@ fn set_libraries() {
     create_symlinks("linux".to_string(), true);
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     
-    // Add multiple search paths
+    // Add library search paths
     println!("cargo:rustc-link-search=native={}", manifest_dir);
     println!("cargo:rustc-link-search=native={}/lib", manifest_dir);
     
     // Check for the actual library file first, then try different linking strategies
     let lib_dir = Path::new(&manifest_dir).join("lib");
-    let direct_so_path = lib_dir.join("libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.so");
     let direct_a_path = lib_dir.join("libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.a");
+    let direct_so_path = lib_dir.join("libhdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64.so");
     let symlink_so_path = Path::new(&manifest_dir).join("libhdfs.so");
     
-    // Try to copy the library file directly to avoid symlink issues in git dependencies
-    if direct_so_path.exists() && !symlink_so_path.exists() {
-        if let Err(_) = std::fs::copy(&direct_so_path, &symlink_so_path) {
-            // If copy fails, try direct linking
-            println!("cargo:rustc-link-lib=dylib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
-            println!("cargo:rustc-link-search=native={}", lib_dir.display());
-            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
-            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
-            return;
-        }
-    }
-    
-    if direct_so_path.exists() {
-        // Use the direct library path to avoid symlink issues
-        println!("cargo:rustc-link-lib=dylib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
-        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // Prefer static linking to avoid shared library issues in git dependencies
+    if direct_a_path.exists() {
+        // Use static linking - most reliable for git dependencies
+        println!("cargo:rustc-link-lib=static=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
     } else if symlink_so_path.exists() {
         // Try using the symlink
         println!("cargo:rustc-link-lib=hdfs");
-    } else if direct_a_path.exists() {
-        // Fallback to static linking
-        println!("cargo:rustc-link-lib=static=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
-        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
+    } else if direct_so_path.exists() {
+        // Use the direct shared library path
+        println!("cargo:rustc-link-lib=dylib=hdfs-golang-3.2.0.18-EE-SNAPSHOT-linux-amd64");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
     } else {
         // Final fallback
         println!("cargo:rustc-link-lib=static=hdfs");
     }
-    
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -190,6 +178,7 @@ fn main() {
 fn create_symlinks(target_os: String, shared: bool) {
     let lib_dir = Path::new("lib");
 
+    // Only create symlinks, don't emit any linking directives here
     // Create symlinks for all supported architectures to ensure compatibility 
     // when this crate is used as a dependency
     create_symlink_for_platform(lib_dir, "linux-amd64", ".so", "libhdfs.so");
@@ -226,22 +215,21 @@ fn create_symlinks(target_os: String, shared: bool) {
         }
     }
 
-    let lib_file = lib_file.expect("Library file not found");
-    let header_file = header_file.expect("Header file not found");
+    if let (Some(lib_file), Some(header_file)) = (lib_file, header_file) {
+        let symlink_lib_str = format!("libhdfs{}", lib_ext);
+        let symlink_lib = Path::new(&symlink_lib_str);
+        let symlink_header = Path::new("libhdfs.h");
 
-    let symlink_lib_str = format!("libhdfs{}", lib_ext);
-    let symlink_lib = Path::new(&symlink_lib_str);
-    let symlink_header = Path::new("libhdfs.h");
+        if symlink_lib.exists() {
+            let _ = fs::remove_file(symlink_lib);
+        }
+        if symlink_header.exists() {
+            let _ = fs::remove_file(symlink_header);
+        }
 
-    if symlink_lib.exists() {
-        fs::remove_file(symlink_lib).expect("Failed to remove existing library symlink");
+        let _ = symlink(&lib_file, symlink_lib);
+        let _ = symlink(&header_file, symlink_header);
     }
-    if symlink_header.exists() {
-        fs::remove_file(symlink_header).expect("Failed to remove existing header symlink");
-    }
-
-    symlink(&lib_file, symlink_lib).expect("Failed to create symlink for library");
-    symlink(&header_file, symlink_header).expect("Failed to create symlink for header");
 }
 
 fn create_symlink_for_platform(lib_dir: &Path, arch_filter: &str, lib_ext: &str, symlink_name: &str) {
