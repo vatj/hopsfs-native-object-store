@@ -1,5 +1,5 @@
 [build]
-rustflags =  ["-C", "link-arg=static=hdfs", "-L", "${HOME}/libhdfs" ]
+rustflags = ["-L", "/tmp/libhdfs", "-l", "static=hdfs"]
 
 [env]
 HOPS_LIB_BASE_URL = "https://nexus.hops.works/repository/dev/hops-packaging-dev/HWORKS-2203"
