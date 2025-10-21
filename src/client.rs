@@ -569,6 +569,8 @@ impl HopsClient {
         let (host_str, port_u16) = extract_host_and_port(url);
         let c_host = CString::new(host_str).expect("CString conversion failed");
         let c_port: c_ushort = port_u16;
+        
+        
 
         unsafe {
             let builder = native::hdfsNewBuilder();
@@ -614,6 +616,8 @@ impl HopsClient {
         let c_username = CString::new(username)
             .expect("CString conversion of username failed");
         let c_port: c_ushort = port_u16;
+
+        println!("Connecting to HopsFS at {:?}:{} as {:?}", c_host.clone(), port_u16, c_username.clone());
 
         unsafe {
             let builder = native::hdfsNewBuilder();
