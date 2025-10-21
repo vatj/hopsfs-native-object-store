@@ -44,7 +44,7 @@ pub enum HdfsError {
 
 pub type Result<T> = std::result::Result<T, HdfsError>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WriteOptions {
     /// Block size for HDFS files. None uses cluster default, Some(size) sets explicit size.
     /// Default: 128MB (good for modern HDFS clusters and large files)
