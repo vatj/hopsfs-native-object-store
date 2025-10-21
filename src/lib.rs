@@ -37,6 +37,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
+    runtime::Handle,
     sync::{mpsc, oneshot},
     task::{self, JoinHandle},
 };
@@ -44,6 +45,51 @@ pub type Client = HopsClient;
 
 use crate::client::ReadRangeStream;
 pub use crate::client::{FileStatus, FileWriter, HdfsError, WriteOptions};
+
+/// Builder for creating an [HdfsObjectStore]
+#[derive(Default)]
+pub struct HdfsObjectStoreBuilder {
+    url: Option<String>,
+    config: HashMap<String, String>,
+    io_runtime: Option<Handle>,
+}
+
+impl HdfsObjectStoreBuilder {
+    /// Create a new [HdfsObjectStoreBuilder]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the URL to connect to. Can be the address of a single NameNode, or a logical NameService
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Set configs to use for the client. The provided configs will override any found in the default config files loaded
+    pub fn with_config(
+        mut self,
+        config: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.config = config.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        self
+    }
+
+    // Use a dedicated tokio runtime for spawned tasks and IO operations
+    pub fn with_io_runtime(mut self, runtime: Handle) -> Self {
+        self.io_runtime = Some(runtime);
+        self
+    }
+
+    /// Create the [HdfsObjectStore]] instance from the provided settings
+    pub fn build(self) -> Result<HdfsObjectStore> {
+
+        let client = Arc::new(HopsClient::with_config(&self.url.expect("You must provide the namenode loadbalancer to use HopsFS client"), self.config)
+            .to_object_store_err()?);
+
+        Ok(HdfsObjectStore { client })
+    }
+}
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
