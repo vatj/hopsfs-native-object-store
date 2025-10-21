@@ -82,8 +82,8 @@ impl HdfsObjectStoreBuilder {
     }
 
     /// Create the [HdfsObjectStore]] instance from the provided settings
+    #[tracing::instrument(skip(self))]
     pub fn build(self) -> Result<HdfsObjectStore> {
-
         let client = Arc::new(HopsClient::with_config(&self.url.expect("You must provide the namenode loadbalancer to use HopsFS client"), self.config)
             .to_object_store_err()?);
 
@@ -119,6 +119,7 @@ impl HdfsObjectStore {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument()]
     pub fn with_url(url: &str) -> Result<Self> {
         Ok(Self::new(Arc::new(
             Client::with_url(url).to_object_store_err()?,
@@ -140,6 +141,7 @@ impl HdfsObjectStore {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument()]
     pub fn with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         Ok(Self::new(Arc::new(
             Client::with_config(url, config).to_object_store_err()?,

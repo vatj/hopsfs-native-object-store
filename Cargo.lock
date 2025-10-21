@@ -520,13 +520,13 @@ dependencies = [
  "fs_extra",
  "futures",
  "libc 0.1.12",
- "log",
  "object_store",
  "reqwest",
  "serial_test",
  "tar",
  "thiserror",
  "tokio",
+ "tracing",
  "url",
 ]
 

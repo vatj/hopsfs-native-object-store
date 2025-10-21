@@ -144,6 +144,7 @@ impl FileReader {
         Arc::clone(&self.file)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn hdfs_read(&self, buffer_size: usize) -> Result<Bytes> {
         let file_ptr = self.get_file_ptr() as usize;
         let connection = Arc::clone(&self.connection);
@@ -467,6 +468,7 @@ impl Drop for HopsClient {
     /// Disconnect from the HDFS filesystem.
     /// This can potentially cause problem if the disconnect fails.
     /// Yet there is no explicit close process exists in the lib.rs
+    #[tracing::instrument(skip(self))]
     fn drop(&mut self) {
         for i in 0..MAX_CONNECTIONS {
             unsafe {
@@ -480,6 +482,7 @@ impl Drop for HopsClient {
 }
 
 impl HopsClient {
+    #[tracing::instrument()]
     pub fn with_url(url: &str) -> Result<Self> {
         let mut connections = Vec::with_capacity(MAX_CONNECTIONS);
         for _ in 0..MAX_CONNECTIONS {
@@ -493,6 +496,7 @@ impl HopsClient {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn get_connection(&self) -> Arc<Connection> {
         let curr_index = loop {
             let current = self.next_conn_idx.load(Ordering::SeqCst);
@@ -510,6 +514,7 @@ impl HopsClient {
         Arc::clone(&self.hdfs_internal[curr_index])
     }
 
+    #[tracing::instrument()]
     fn hopsfs_connect_with_url(uri: &str) -> Result<*const hdfsFS> {
         let (host_str, port_u16) = extract_host_and_port(uri);
 
@@ -549,6 +554,7 @@ impl HopsClient {
         })
     }
 
+    #[tracing::instrument()]
     fn hopsfs_connect_with_config(
         url: &str,
         config: &HashMap<String, String>,
@@ -595,6 +601,7 @@ impl HopsClient {
         }
     }
 
+    #[tracing::instrument()]
     fn hopsfs_connect_as_user_with_tls(
         url: &str,
         cert_dir: &str,
@@ -635,6 +642,7 @@ impl HopsClient {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn check_file_exists(&self, path: &str) -> Result<bool> {
         let connection = self.get_connection();
         let c_path = CString::new(path).unwrap();
@@ -651,6 +659,8 @@ impl HopsClient {
         }
         Ok(res.unwrap())
     }
+
+    #[tracing::instrument()]
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
 
             let refined_path = CString::new(path).unwrap();
@@ -698,6 +708,7 @@ impl HopsClient {
             Ok(file_status)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn open_for_read(&self, path: &str) -> Result<FileReader> {
         if self.get_file_info(path).await.is_err() {
             Err(HdfsError::FileNotFound(path.to_string()))?
@@ -732,6 +743,7 @@ impl HopsClient {
         Ok(file_reader)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn create(&self, path: &str, opts: WriteOptions) -> Result<FileWriter> {
         let file_exists = self.check_file_exists(path).await?;
         if file_exists && !opts.overwrite {
@@ -766,6 +778,7 @@ impl HopsClient {
         Ok(file_writer)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn rename(&self, from: &str, to: &str, overwrite: bool) -> Result<()> {
             let destination_exists = self.check_file_exists(to).await?;
             if destination_exists && !overwrite {
@@ -787,6 +800,7 @@ impl HopsClient {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn delete(&self, path: &str, _recursive: bool) -> Result<bool> {
         let _path = CString::new(path).unwrap();
         let connection = self.get_connection();
@@ -837,6 +851,7 @@ impl HopsClient {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self))]
     pub async fn chown(&self, path: &str, owner: Option<&str>, group: Option<&str>) -> Result<()> {
         let path_cstr = CString::new(path).map_err(|_| HdfsError::InvalidPath(path.to_string()))?;
         
@@ -888,6 +903,7 @@ impl HopsClient {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self))]
     pub async fn chmod(&self, path: &str, mode: u16) -> Result<()> {
         let path_cstr = CString::new(path).map_err(|_| HdfsError::InvalidPath(path.to_string()))?;
         let connection = self.get_connection();
@@ -910,6 +926,7 @@ impl HopsClient {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn list_directory(&self, prefix: &str) -> Result<Vec<FileStatus>> {
         let path_cstr =
             CString::new(prefix).map_err(|_| HdfsError::InvalidPath(prefix.to_string()))?;
@@ -942,6 +959,7 @@ impl HopsClient {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn hdfs_copy(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
         let dst_exists = self.check_file_exists(dst).await?;
         if dst_exists && !overwrite {
@@ -976,6 +994,8 @@ impl HopsClient {
             ))
         }
     }
+
+    #[tracing::instrument(skip(self))]
     pub async fn mkdir(&self, path: &str) -> Result<()> {
         let path_cstr = CString::new(path).unwrap();
         let connection = self.get_connection();
@@ -1023,6 +1043,7 @@ impl HopsClient {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self))]
     pub async fn copy_from_local(&self, local_path: &str, hdfs_path: &str, opts: Option<WriteOptions>) -> Result<()> {
         // Check if local file exists and is readable using async file operations
         let local_metadata = fs::metadata(local_path).await
@@ -1098,6 +1119,7 @@ impl HopsClient {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self))]
     pub async fn copy_to_local(&self, hdfs_path: &str, local_path: &str, overwrite: bool, create_parent: bool) -> Result<()> {
         // Check if HDFS file exists
         if !self.check_file_exists(hdfs_path).await? {
@@ -1166,6 +1188,7 @@ impl HopsClient {
 
 }
 
+#[tracing::instrument()]
 fn extract_host_and_port(uri: &str) -> (String, u16) {
     let default_port = 8020;
 
